@@ -9,8 +9,44 @@
 #include "safe_alloc.h"
 
 #include <stdio.h>
+#include <stdarg.h>
 #include <stdlib.h>
 #include <string.h>
+
+/* -------------------------------------------------------------------------
+ * Pluggable log handler
+ * ---------------------------------------------------------------------- */
+
+/** Default handler: write to stderr. */
+static void default_log_handler(SafeAllocLogLevel level, const char *msg)
+{
+    (void)level; /* severity visible in the "[safe_alloc] WARNING/ERROR" prefix */
+    fprintf(stderr, "%s", msg);
+}
+
+static SafeAllocLogFn g_log_fn = default_log_handler;
+
+void safe_alloc_set_log_handler(SafeAllocLogFn fn)
+{
+    g_log_fn = (fn != NULL) ? fn : default_log_handler;
+}
+
+/**
+ * Internal helper — format a log message and dispatch it through the
+ * currently-installed handler.
+ */
+#ifdef __GNUC__
+__attribute__((format(printf, 2, 3)))
+#endif
+static void safe_log(SafeAllocLogLevel level, const char *fmt, ...)
+{
+    char buf[512];
+    va_list ap;
+    va_start(ap, fmt);
+    vsnprintf(buf, sizeof(buf), fmt, ap);
+    va_end(ap);
+    g_log_fn(level, buf);
+}
 
 /* -------------------------------------------------------------------------
  * Internal record table
@@ -81,10 +117,10 @@ static int register_alloc(void *ptr, size_t size)
 {
     int idx = find_free_slot();
     if (idx < 0) {
-        fprintf(stderr,
-                "[safe_alloc] WARNING: record table full (%u slots), "
-                "cannot track ptr=%p size=%zu\n",
-                SAFE_ALLOC_MAX_RECORDS, ptr, size);
+        safe_log(SAFE_ALLOC_LOG_WARNING,
+                 "[safe_alloc] WARNING: record table full (%u slots), "
+                 "cannot track ptr=%p size=%zu\n",
+                 SAFE_ALLOC_MAX_RECORDS, ptr, size);
         return -1;
     }
 
@@ -113,14 +149,14 @@ void *safe_malloc(size_t size)
 {
     void *ptr = malloc(size);
     if (ptr == NULL) {
-        fprintf(stderr,
-                "[safe_alloc] ERROR: malloc(%zu) failed\n", size);
+        safe_log(SAFE_ALLOC_LOG_ERROR,
+                 "[safe_alloc] ERROR: malloc(%zu) failed\n", size);
         return NULL;
     }
     if (register_alloc(ptr, size) != 0) {
         /* Table full — still return the memory but warn that it's untracked. */
-        fprintf(stderr,
-                "[safe_alloc] WARNING: allocation ptr=%p is untracked\n", ptr);
+        safe_log(SAFE_ALLOC_LOG_WARNING,
+                 "[safe_alloc] WARNING: allocation ptr=%p is untracked\n", ptr);
     }
     return ptr;
 }
@@ -129,13 +165,13 @@ void *safe_calloc(size_t nmemb, size_t size)
 {
     void *ptr = calloc(nmemb, size);
     if (ptr == NULL) {
-        fprintf(stderr,
-                "[safe_alloc] ERROR: calloc(%zu, %zu) failed\n", nmemb, size);
+        safe_log(SAFE_ALLOC_LOG_ERROR,
+                 "[safe_alloc] ERROR: calloc(%zu, %zu) failed\n", nmemb, size);
         return NULL;
     }
     if (register_alloc(ptr, nmemb * size) != 0) {
-        fprintf(stderr,
-                "[safe_alloc] WARNING: allocation ptr=%p is untracked\n", ptr);
+        safe_log(SAFE_ALLOC_LOG_WARNING,
+                 "[safe_alloc] WARNING: allocation ptr=%p is untracked\n", ptr);
     }
     return ptr;
 }
@@ -161,23 +197,23 @@ void *safe_realloc(void *ptr, size_t new_size)
         /* Check if it was already freed (double-realloc). */
         int any = find_any(ptr);
         if (any >= 0 && g_records[any].freed) {
-            fprintf(stderr,
-                    "[safe_alloc] WARNING: safe_realloc called on already-freed "
-                    "ptr=%p (seq=%u)\n",
-                    ptr, g_records[any].seq);
+            safe_log(SAFE_ALLOC_LOG_WARNING,
+                     "[safe_alloc] WARNING: safe_realloc called on already-freed "
+                     "ptr=%p (seq=%u)\n",
+                     ptr, g_records[any].seq);
         } else {
-            fprintf(stderr,
-                    "[safe_alloc] WARNING: safe_realloc called on unregistered "
-                    "ptr=%p\n", ptr);
+            safe_log(SAFE_ALLOC_LOG_WARNING,
+                     "[safe_alloc] WARNING: safe_realloc called on unregistered "
+                     "ptr=%p\n", ptr);
         }
         /* Still attempt the realloc so the caller's memory is not lost. */
     }
 
     new_ptr = realloc(ptr, new_size);
     if (new_ptr == NULL) {
-        fprintf(stderr,
-                "[safe_alloc] ERROR: realloc(ptr=%p, %zu) failed — "
-                "original allocation preserved\n", ptr, new_size);
+        safe_log(SAFE_ALLOC_LOG_ERROR,
+                 "[safe_alloc] ERROR: realloc(ptr=%p, %zu) failed — "
+                 "original allocation preserved\n", ptr, new_size);
         return NULL;
     }
 
@@ -216,14 +252,14 @@ void safe_free(void *ptr)
         /* Check for double-free. */
         int any = find_any(ptr);
         if (any >= 0 && g_records[any].freed) {
-            fprintf(stderr,
-                    "[safe_alloc] WARNING: double-free detected for "
-                    "ptr=%p (originally allocated as seq=%u, size=%zu)\n",
-                    ptr, g_records[any].seq, g_records[any].size);
+            safe_log(SAFE_ALLOC_LOG_WARNING,
+                     "[safe_alloc] WARNING: double-free detected for "
+                     "ptr=%p (originally allocated as seq=%u, size=%zu)\n",
+                     ptr, g_records[any].seq, g_records[any].size);
         } else {
-            fprintf(stderr,
-                    "[safe_alloc] WARNING: free of unregistered ptr=%p\n",
-                    ptr);
+            safe_log(SAFE_ALLOC_LOG_WARNING,
+                     "[safe_alloc] WARNING: free of unregistered ptr=%p\n",
+                     ptr);
         }
         /* Do NOT call free() — prevents undefined behaviour. */
         return;
@@ -248,37 +284,42 @@ void safe_alloc_dump_alive(void)
 {
     unsigned int i;
     unsigned int count = 0;
+    char line[128];
 
-    fprintf(stderr, "[safe_alloc] --- alive allocations ---\n");
-    fprintf(stderr, "  %-6s  %-18s  %s\n", "seq", "ptr", "size");
+    safe_log(SAFE_ALLOC_LOG_WARNING, "[safe_alloc] --- alive allocations ---\n");
+    safe_log(SAFE_ALLOC_LOG_WARNING, "  seq     ptr                size\n");
     for (i = 0; i < g_used; ++i) {
         if (g_records[i].freed == 0) {
-            fprintf(stderr, "  %-6u  %-18p  %zu\n",
-                    g_records[i].seq, g_records[i].ptr, g_records[i].size);
+            snprintf(line, sizeof(line), "  %-6u  %-18p  %zu\n",
+                     g_records[i].seq, g_records[i].ptr, g_records[i].size);
+            safe_log(SAFE_ALLOC_LOG_WARNING, "%s", line);
             ++count;
         }
     }
-    fprintf(stderr, "[safe_alloc] total alive: %u\n", count);
+    snprintf(line, sizeof(line), "[safe_alloc] total alive: %u\n", count);
+    safe_log(SAFE_ALLOC_LOG_WARNING, "%s", line);
 }
 
 void safe_alloc_dump_all(void)
 {
     unsigned int i;
+    char line[128];
 
-    fprintf(stderr, "[safe_alloc] --- full allocation history ---\n");
-    fprintf(stderr, "  %-6s  %-18s  %-10s  %s\n",
-            "seq", "ptr", "size", "status");
+    safe_log(SAFE_ALLOC_LOG_WARNING, "[safe_alloc] --- full allocation history ---\n");
+    safe_log(SAFE_ALLOC_LOG_WARNING, "  seq     ptr                size        status\n");
     for (i = 0; i < g_used; ++i) {
-        fprintf(stderr, "  %-6u  %-18p  %-10zu  %s\n",
-                g_records[i].seq,
-                g_records[i].ptr,
-                g_records[i].size,
-                g_records[i].freed ? "freed" : "ALIVE");
+        snprintf(line, sizeof(line), "  %-6u  %-18p  %-10zu  %s\n",
+                 g_records[i].seq,
+                 g_records[i].ptr,
+                 g_records[i].size,
+                 g_records[i].freed ? "freed" : "ALIVE");
+        safe_log(SAFE_ALLOC_LOG_WARNING, "%s", line);
     }
-    fprintf(stderr,
-            "[safe_alloc] stats: alive=%u  peak=%u  "
-            "total_allocs=%u  total_frees=%u\n",
-            g_alive, g_peak, g_total_allocs, g_total_frees);
+    snprintf(line, sizeof(line),
+             "[safe_alloc] stats: alive=%u  peak=%u  "
+             "total_allocs=%u  total_frees=%u\n",
+             g_alive, g_peak, g_total_allocs, g_total_frees);
+    safe_log(SAFE_ALLOC_LOG_WARNING, "%s", line);
 }
 
 unsigned int safe_alloc_get_records(SafeAllocRecord *out, unsigned int max_count)
