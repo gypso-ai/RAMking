@@ -7,6 +7,12 @@
 *.obj
 *.elf
 
+# Build output directories
+obj/
+
+# Test binary
+test_safe_alloc
+
 # Linker output
 *.ilk
 *.map
