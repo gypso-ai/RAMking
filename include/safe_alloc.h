@@ -116,4 +116,37 @@ unsigned int safe_alloc_get_records(SafeAllocRecord *out, unsigned int max_count
  */
 void safe_alloc_reset(void);
 
+/* -------------------------------------------------------------------------
+ * Pluggable log / diagnostic output
+ * ---------------------------------------------------------------------- */
+
+/**
+ * Severity levels passed to the log handler.
+ */
+typedef enum {
+    SAFE_ALLOC_LOG_WARNING = 0, /**< Non-fatal diagnostic (double-free, etc.) */
+    SAFE_ALLOC_LOG_ERROR   = 1  /**< Allocation failure or serious condition   */
+} SafeAllocLogLevel;
+
+/**
+ * Callback type for log / error messages emitted by safe_alloc internals.
+ *
+ * @param level   Severity of the message.
+ * @param msg     NUL-terminated, fully-formatted message string.
+ *
+ * The default handler writes to stderr via fprintf.  Install a custom
+ * handler to redirect output to a logger, GUI, test spy, etc.
+ */
+typedef void (*SafeAllocLogFn)(SafeAllocLogLevel level, const char *msg);
+
+/**
+ * safe_alloc_set_log_handler — replace the log handler used for all
+ * internal warnings and errors.
+ *
+ * Pass NULL to restore the built-in default (fprintf to stderr).
+ * The handler is stored as a plain function pointer; it is the caller's
+ * responsibility to ensure thread safety if needed.
+ */
+void safe_alloc_set_log_handler(SafeAllocLogFn fn);
+
 #endif /* SAFE_ALLOC_H */
