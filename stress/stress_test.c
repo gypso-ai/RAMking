@@ -110,7 +110,7 @@ static void stress_sequential_cycles(void)
     printf("  %u alloc+free cycles in %.4f s  (%.0f Mops/s)\n",
            CYCLES, secs, ops / secs / 1e6);
 
-    CHECK(g_run >= 0); /* always passes — metrics only */
+    CHECK(safe_alloc_alive_count() == 0);
 }
 
 /* -------------------------------------------------------------------------

@@ -13,6 +13,9 @@
 #include <stdlib.h>
 #include <string.h>
 
+/* Log buffer size for safe_log internal formatting */
+#define SAFE_LOG_BUFFER_SIZE 512
+
 /* -------------------------------------------------------------------------
  * Pluggable log handler
  * ---------------------------------------------------------------------- */
@@ -40,7 +43,7 @@ __attribute__((format(printf, 2, 3)))
 #endif
 static void safe_log(SafeAllocLogLevel level, const char *fmt, ...)
 {
-    char buf[512];
+    char buf[SAFE_LOG_BUFFER_SIZE];
     va_list ap;
     va_start(ap, fmt);
     vsnprintf(buf, sizeof(buf), fmt, ap);
