@@ -2,8 +2,8 @@
  * safe_alloc.h — Safe C Memory Management Interface
  *
  * Wraps malloc / calloc / realloc / free and tracks every allocation in a
- * compile-time-sized static record table.  Detects double-free, free of
- * unregistered pointers, and provides diagnostic helpers.
+ * configurable record table.  Detects double-free, free of unregistered
+ * pointers, and provides diagnostic helpers.
  *
  * Configuration macros (define BEFORE including this header, or via -D):
  *   SAFE_ALLOC_MAX_RECORDS   maximum number of simultaneously tracked
@@ -31,6 +31,11 @@ typedef struct {
     int          freed;  /**< 0 = alive, 1 = freed                     */
     unsigned int seq;    /**< Monotonically increasing allocation index */
 } SafeAllocRecord;
+
+typedef void *(*SafeAllocMallocFn)(size_t size);
+typedef void *(*SafeAllocCallocFn)(size_t nmemb, size_t size);
+typedef void *(*SafeAllocReallocFn)(void *ptr, size_t size);
+typedef void  (*SafeAllocFreeFn)(void *ptr);
 
 /* -------------------------------------------------------------------------
  * Core allocation API
@@ -65,6 +70,30 @@ void *safe_realloc(void *ptr, size_t new_size);
  *   - Already-freed ptr → double-free warning, pointer NOT freed again
  */
 void safe_free(void *ptr);
+
+/**
+ * safe_alloc_set_allocators — replace the underlying malloc/calloc/realloc/
+ * free hooks used by this module.
+ *
+ * Pass NULL for any hook to restore the corresponding standard C allocator.
+ * The change is only allowed when no allocations are currently alive.
+ * On success, bookkeeping is reset and 0 is returned; on failure, -1.
+ */
+int safe_alloc_set_allocators(SafeAllocMallocFn malloc_fn,
+                              SafeAllocCallocFn calloc_fn,
+                              SafeAllocReallocFn realloc_fn,
+                              SafeAllocFreeFn free_fn);
+
+/**
+ * safe_alloc_set_record_buffer — replace the internal record table with
+ * caller-provided storage.
+ *
+ * Pass records != NULL with max_records > 0 to use external storage.
+ * Pass NULL and 0 to restore the built-in static table.
+ * The change is only allowed when no allocations are currently alive.
+ * On success, bookkeeping is reset and 0 is returned; on failure, -1.
+ */
+int safe_alloc_set_record_buffer(SafeAllocRecord *records, unsigned int max_records);
 
 /* -------------------------------------------------------------------------
  * Diagnostic / statistics API

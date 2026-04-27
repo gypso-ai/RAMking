@@ -37,6 +37,12 @@ static int g_tests_failed = 0;
 static void begin_test(const char *name)
 {
     printf("\n=== %s ===\n", name);
+    safe_alloc_set_log_handler(NULL);
+    if (safe_alloc_set_allocators(NULL, NULL, NULL, NULL) != 0 ||
+        safe_alloc_set_record_buffer(NULL, 0) != 0) {
+        fprintf(stderr, "  FAIL  %s:%d  (test setup)\n", __FILE__, __LINE__);
+        ++g_tests_failed;
+    }
     safe_alloc_reset();   /* fresh state for every test case */
 }
 
@@ -265,6 +271,111 @@ static void test_dump_all(void)
     CHECK(safe_alloc_total_frees()   == 1);
 }
 
+static unsigned int g_custom_malloc_calls  = 0;
+static unsigned int g_custom_calloc_calls  = 0;
+static unsigned int g_custom_realloc_calls = 0;
+static unsigned int g_custom_free_calls    = 0;
+
+static void *counting_malloc(size_t size)
+{
+    ++g_custom_malloc_calls;
+    return malloc(size);
+}
+
+static void *counting_calloc(size_t nmemb, size_t size)
+{
+    ++g_custom_calloc_calls;
+    return calloc(nmemb, size);
+}
+
+static void *counting_realloc(void *ptr, size_t size)
+{
+    ++g_custom_realloc_calls;
+    return realloc(ptr, size);
+}
+
+static void counting_free(void *ptr)
+{
+    ++g_custom_free_calls;
+    free(ptr);
+}
+
+static void test_custom_allocators(void)
+{
+    begin_test("custom allocator hooks");
+
+    g_custom_malloc_calls = 0;
+    g_custom_calloc_calls = 0;
+    g_custom_realloc_calls = 0;
+    g_custom_free_calls = 0;
+
+    CHECK(safe_alloc_set_allocators(counting_malloc,
+                                    counting_calloc,
+                                    counting_realloc,
+                                    counting_free) == 0);
+
+    void *p = safe_malloc(24);
+    CHECK(p != NULL);
+    CHECK(g_custom_malloc_calls == 1);
+
+    int *arr = (int *)safe_calloc(4, sizeof(int));
+    CHECK(arr != NULL);
+    CHECK(g_custom_calloc_calls == 1);
+
+    p = safe_realloc(p, 48);
+    CHECK(p != NULL);
+    CHECK(g_custom_realloc_calls == 1);
+
+    safe_free(p);
+    safe_free(arr);
+    CHECK(g_custom_free_calls == 2);
+}
+
+static void test_external_record_buffer(void)
+{
+    SafeAllocRecord external_records[4];
+    const unsigned char dirty_pattern = 0xAB;
+
+    begin_test("caller-provided record buffer");
+
+    /* Pre-fill the caller buffer so the API must clear stale record contents. */
+    memset(external_records, dirty_pattern, sizeof(external_records));
+    CHECK(safe_alloc_set_record_buffer(external_records, 4) == 0);
+    CHECK(external_records[0].ptr == NULL);
+
+    void *p1 = safe_malloc(10);
+    void *p2 = safe_malloc(20);
+    CHECK(p1 != NULL);
+    CHECK(p2 != NULL);
+    CHECK(safe_alloc_alive_count() == 2);
+    CHECK(external_records[0].ptr != NULL);
+    CHECK(external_records[1].ptr != NULL);
+
+    safe_free(p1);
+    safe_free(p2);
+
+    CHECK(safe_alloc_set_record_buffer(NULL, 0) == 0);
+    CHECK(safe_alloc_alive_count() == 0);
+}
+
+static void test_reconfigure_while_alive_fails(void)
+{
+    begin_test("reconfigure while allocations are alive fails");
+
+    SafeAllocRecord external_records[2];
+    void *p = safe_malloc(8);
+
+    CHECK(p != NULL);
+    CHECK(safe_alloc_set_allocators(counting_malloc,
+                                    counting_calloc,
+                                    counting_realloc,
+                                    counting_free) == -1);
+    CHECK(safe_alloc_set_record_buffer(external_records, 2) == -1);
+    CHECK(safe_alloc_alive_count() == 1);
+
+    safe_free(p);
+}
+
 /* -------------------------------------------------------------------------
  * Entry point
  * ---------------------------------------------------------------------- */
@@ -286,6 +397,9 @@ int main(void)
     test_list_alive();
     test_total_stats();
     test_dump_all();
+    test_custom_allocators();
+    test_external_record_buffer();
+    test_reconfigure_while_alive_fails();
 
     printf("\n================================\n");
     printf("Results: %d/%d passed", g_tests_run - g_tests_failed, g_tests_run);
