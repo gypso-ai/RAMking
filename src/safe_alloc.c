@@ -56,6 +56,7 @@ static void safe_log(SafeAllocLogLevel level, const char *fmt, ...)
 
 /* One slot per tracked allocation; freed slots are reused. */
 static SafeAllocRecord g_default_records[SAFE_ALLOC_MAX_RECORDS];
+/* g_records points at either g_default_records or caller-provided storage. */
 static SafeAllocRecord *g_records = g_default_records;
 static unsigned int g_record_capacity = SAFE_ALLOC_MAX_RECORDS;
 
@@ -307,6 +308,9 @@ int safe_alloc_set_allocators(SafeAllocMallocFn malloc_fn,
 
 int safe_alloc_set_record_buffer(SafeAllocRecord *records, unsigned int max_records)
 {
+    int use_default;
+    int use_external;
+
     if (g_alive != 0) {
         safe_log(SAFE_ALLOC_LOG_WARNING,
                  "[safe_alloc] WARNING: cannot change record buffer while %u allocations are alive\n",
@@ -314,9 +318,9 @@ int safe_alloc_set_record_buffer(SafeAllocRecord *records, unsigned int max_reco
         return -1;
     }
 
-    /* Either restore defaults with NULL/0, or provide both buffer and size. */
-    if ((records == NULL && max_records != 0) ||
-        (records != NULL && max_records == 0)) {
+    use_default = (records == NULL && max_records == 0);
+    use_external = (records != NULL && max_records != 0);
+    if (!use_default && !use_external) {
         safe_log(SAFE_ALLOC_LOG_WARNING,
                  "[safe_alloc] WARNING: invalid record buffer configuration\n");
         return -1;

@@ -38,8 +38,11 @@ static void begin_test(const char *name)
 {
     printf("\n=== %s ===\n", name);
     safe_alloc_set_log_handler(NULL);
-    (void)safe_alloc_set_allocators(NULL, NULL, NULL, NULL);
-    (void)safe_alloc_set_record_buffer(NULL, 0);
+    if (safe_alloc_set_allocators(NULL, NULL, NULL, NULL) != 0 ||
+        safe_alloc_set_record_buffer(NULL, 0) != 0) {
+        fprintf(stderr, "  FAIL  %s:%d  (test setup)\n", __FILE__, __LINE__);
+        ++g_tests_failed;
+    }
     safe_alloc_reset();   /* fresh state for every test case */
 }
 
@@ -268,8 +271,8 @@ static void test_dump_all(void)
     CHECK(safe_alloc_total_frees()   == 1);
 }
 
-static unsigned int g_custom_malloc_calls  = 0;
-static unsigned int g_custom_calloc_calls  = 0;
+static unsigned int g_custom_malloc_calls = 0;
+static unsigned int g_custom_calloc_calls = 0;
 static unsigned int g_custom_realloc_calls = 0;
 static unsigned int g_custom_free_calls    = 0;
 

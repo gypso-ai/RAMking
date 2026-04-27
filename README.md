@@ -65,6 +65,7 @@ SafeAllocRecord records[256];
 safe_alloc_set_allocators(custom_malloc, custom_calloc, custom_realloc, custom_free);
 safe_alloc_set_record_buffer(records, 256);
 ```
+```
 
 ## Files
 
