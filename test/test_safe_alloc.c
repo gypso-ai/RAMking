@@ -336,6 +336,7 @@ static void test_external_record_buffer(void)
 
     memset(external_records, 0xAB, sizeof(external_records));
     CHECK(safe_alloc_set_record_buffer(external_records, 4) == 0);
+    CHECK(external_records[0].ptr == NULL);
 
     void *p1 = safe_malloc(10);
     void *p2 = safe_malloc(20);

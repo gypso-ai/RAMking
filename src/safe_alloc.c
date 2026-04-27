@@ -164,7 +164,7 @@ void *safe_malloc(size_t size)
     void *ptr = g_malloc_fn(size);
     if (ptr == NULL) {
         safe_log(SAFE_ALLOC_LOG_ERROR,
-                  "[safe_alloc] ERROR: malloc(%zu) failed\n", size);
+                 "[safe_alloc] ERROR: malloc(%zu) failed\n", size);
         return NULL;
     }
     if (register_alloc(ptr, size) != 0) {
@@ -180,7 +180,7 @@ void *safe_calloc(size_t nmemb, size_t size)
     void *ptr = g_calloc_fn(nmemb, size);
     if (ptr == NULL) {
         safe_log(SAFE_ALLOC_LOG_ERROR,
-                  "[safe_alloc] ERROR: calloc(%zu, %zu) failed\n", nmemb, size);
+                 "[safe_alloc] ERROR: calloc(%zu, %zu) failed\n", nmemb, size);
         return NULL;
     }
     if (register_alloc(ptr, nmemb * size) != 0) {
@@ -314,8 +314,7 @@ int safe_alloc_set_record_buffer(SafeAllocRecord *records, unsigned int max_reco
         return -1;
     }
 
-    if ((records == NULL && max_records != 0) ||
-        (records != NULL && max_records == 0)) {
+    if ((records == NULL) != (max_records == 0)) {
         safe_log(SAFE_ALLOC_LOG_WARNING,
                  "[safe_alloc] WARNING: invalid record buffer configuration\n");
         return -1;
