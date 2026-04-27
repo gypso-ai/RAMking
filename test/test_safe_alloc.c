@@ -331,10 +331,12 @@ static void test_custom_allocators(void)
 static void test_external_record_buffer(void)
 {
     SafeAllocRecord external_records[4];
+    const unsigned char dirty_pattern = 0xAB;
 
     begin_test("caller-provided record buffer");
 
-    memset(external_records, 0xAB, sizeof(external_records));
+    /* Pre-fill the caller buffer so the API must clear stale record contents. */
+    memset(external_records, dirty_pattern, sizeof(external_records));
     CHECK(safe_alloc_set_record_buffer(external_records, 4) == 0);
     CHECK(external_records[0].ptr == NULL);
 

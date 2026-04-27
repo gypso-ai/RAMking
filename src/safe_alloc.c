@@ -314,7 +314,9 @@ int safe_alloc_set_record_buffer(SafeAllocRecord *records, unsigned int max_reco
         return -1;
     }
 
-    if ((records == NULL) != (max_records == 0)) {
+    /* Either restore defaults with NULL/0, or provide both buffer and size. */
+    if ((records == NULL && max_records != 0) ||
+        (records != NULL && max_records == 0)) {
         safe_log(SAFE_ALLOC_LOG_WARNING,
                  "[safe_alloc] WARNING: invalid record buffer configuration\n");
         return -1;
