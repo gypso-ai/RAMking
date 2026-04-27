@@ -1,9 +1,8 @@
 /**
  * safe_alloc.c — Implementation of the safe C memory management interface.
  *
- * All allocation records are kept in a single static array so the module
- * never calls malloc for its own bookkeeping (avoids re-entrance issues and
- * keeps the implementation free of recursive allocation).
+ * Allocation bookkeeping defaults to a static array, but callers can also
+ * provide their own record buffer and underlying allocator functions.
  */
 
 #include "safe_alloc.h"
@@ -56,7 +55,19 @@ static void safe_log(SafeAllocLogLevel level, const char *fmt, ...)
  * ---------------------------------------------------------------------- */
 
 /* One slot per tracked allocation; freed slots are reused. */
-static SafeAllocRecord g_records[SAFE_ALLOC_MAX_RECORDS];
+static SafeAllocRecord g_default_records[SAFE_ALLOC_MAX_RECORDS];
+static SafeAllocRecord *g_records = g_default_records;
+static unsigned int g_record_capacity = SAFE_ALLOC_MAX_RECORDS;
+
+static void *default_malloc(size_t size) { return malloc(size); }
+static void *default_calloc(size_t nmemb, size_t size) { return calloc(nmemb, size); }
+static void *default_realloc(void *ptr, size_t size) { return realloc(ptr, size); }
+static void default_free(void *ptr) { free(ptr); }
+
+static SafeAllocMallocFn g_malloc_fn = default_malloc;
+static SafeAllocCallocFn g_calloc_fn = default_calloc;
+static SafeAllocReallocFn g_realloc_fn = default_realloc;
+static SafeAllocFreeFn g_free_fn = default_free;
 
 /* Number of slots that have ever been written (high-water mark into the array,
    not the same as alive count). */
@@ -109,7 +120,7 @@ static int find_free_slot(void)
         }
     }
     /* No freed slot found; try to extend the array. */
-    if (g_used < SAFE_ALLOC_MAX_RECORDS) {
+    if (g_used < g_record_capacity) {
         return (int)g_used; /* caller must increment g_used */
     }
     return -1; /* table full */
@@ -123,7 +134,7 @@ static int register_alloc(void *ptr, size_t size)
         safe_log(SAFE_ALLOC_LOG_WARNING,
                  "[safe_alloc] WARNING: record table full (%u slots), "
                  "cannot track ptr=%p size=%zu\n",
-                 SAFE_ALLOC_MAX_RECORDS, ptr, size);
+                 g_record_capacity, ptr, size);
         return -1;
     }
 
@@ -150,10 +161,10 @@ static int register_alloc(void *ptr, size_t size)
 
 void *safe_malloc(size_t size)
 {
-    void *ptr = malloc(size);
+    void *ptr = g_malloc_fn(size);
     if (ptr == NULL) {
         safe_log(SAFE_ALLOC_LOG_ERROR,
-                 "[safe_alloc] ERROR: malloc(%zu) failed\n", size);
+                  "[safe_alloc] ERROR: malloc(%zu) failed\n", size);
         return NULL;
     }
     if (register_alloc(ptr, size) != 0) {
@@ -166,10 +177,10 @@ void *safe_malloc(size_t size)
 
 void *safe_calloc(size_t nmemb, size_t size)
 {
-    void *ptr = calloc(nmemb, size);
+    void *ptr = g_calloc_fn(nmemb, size);
     if (ptr == NULL) {
         safe_log(SAFE_ALLOC_LOG_ERROR,
-                 "[safe_alloc] ERROR: calloc(%zu, %zu) failed\n", nmemb, size);
+                  "[safe_alloc] ERROR: calloc(%zu, %zu) failed\n", nmemb, size);
         return NULL;
     }
     if (register_alloc(ptr, nmemb * size) != 0) {
@@ -212,7 +223,7 @@ void *safe_realloc(void *ptr, size_t new_size)
         /* Still attempt the realloc so the caller's memory is not lost. */
     }
 
-    new_ptr = realloc(ptr, new_size);
+    new_ptr = g_realloc_fn(ptr, new_size);
     if (new_ptr == NULL) {
         safe_log(SAFE_ALLOC_LOG_ERROR,
                  "[safe_alloc] ERROR: realloc(ptr=%p, %zu) failed — "
@@ -271,7 +282,55 @@ void safe_free(void *ptr)
     g_records[idx].freed = 1;
     --g_alive;
     ++g_total_frees;
-    free(ptr);
+    g_free_fn(ptr);
+}
+
+int safe_alloc_set_allocators(SafeAllocMallocFn malloc_fn,
+                              SafeAllocCallocFn calloc_fn,
+                              SafeAllocReallocFn realloc_fn,
+                              SafeAllocFreeFn free_fn)
+{
+    if (g_alive != 0) {
+        safe_log(SAFE_ALLOC_LOG_WARNING,
+                 "[safe_alloc] WARNING: cannot change allocators while %u allocations are alive\n",
+                 g_alive);
+        return -1;
+    }
+
+    safe_alloc_reset();
+    g_malloc_fn = (malloc_fn != NULL) ? malloc_fn : default_malloc;
+    g_calloc_fn = (calloc_fn != NULL) ? calloc_fn : default_calloc;
+    g_realloc_fn = (realloc_fn != NULL) ? realloc_fn : default_realloc;
+    g_free_fn = (free_fn != NULL) ? free_fn : default_free;
+    return 0;
+}
+
+int safe_alloc_set_record_buffer(SafeAllocRecord *records, unsigned int max_records)
+{
+    if (g_alive != 0) {
+        safe_log(SAFE_ALLOC_LOG_WARNING,
+                 "[safe_alloc] WARNING: cannot change record buffer while %u allocations are alive\n",
+                 g_alive);
+        return -1;
+    }
+
+    if ((records == NULL && max_records != 0) ||
+        (records != NULL && max_records == 0)) {
+        safe_log(SAFE_ALLOC_LOG_WARNING,
+                 "[safe_alloc] WARNING: invalid record buffer configuration\n");
+        return -1;
+    }
+
+    safe_alloc_reset();
+    if (records != NULL) {
+        g_records = records;
+        g_record_capacity = max_records;
+    } else {
+        g_records = g_default_records;
+        g_record_capacity = SAFE_ALLOC_MAX_RECORDS;
+    }
+    memset(g_records, 0, sizeof(*g_records) * g_record_capacity);
+    return 0;
 }
 
 /* -------------------------------------------------------------------------
@@ -339,7 +398,7 @@ unsigned int safe_alloc_get_records(SafeAllocRecord *out, unsigned int max_count
 
 void safe_alloc_reset(void)
 {
-    memset(g_records, 0, sizeof(g_records));
+    memset(g_records, 0, sizeof(*g_records) * g_record_capacity);
     g_used        = 0;
     g_seq         = 0;
     g_alive       = 0;
