@@ -271,8 +271,8 @@ static void test_dump_all(void)
     CHECK(safe_alloc_total_frees()   == 1);
 }
 
-static unsigned int g_custom_malloc_calls = 0;
-static unsigned int g_custom_calloc_calls = 0;
+static unsigned int g_custom_malloc_calls  = 0;
+static unsigned int g_custom_calloc_calls  = 0;
 static unsigned int g_custom_realloc_calls = 0;
 static unsigned int g_custom_free_calls    = 0;
 
